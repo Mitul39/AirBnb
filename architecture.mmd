@@ -1,0 +1,110 @@
+flowchart TB
+  %% Airbnb-like high-level architecture: layered for interview readability.
+  subgraph EdgeLayer[1. Users & Edge]
+    direction LR
+    Users[Guests / Hosts] --> DNS[Global DNS + CDN / WAF]
+    DNS --> Web[Responsive Web Frontend<br/>SSR + static assets]
+  end
+
+  subgraph AppLayer[2. Application Layer]
+    direction LR
+    BFF[API Gateway / BFF<br/>Auth · rate limits · routing]
+    Identity[Identity & Profile Service]
+    Listing[Listing & Inventory Service]
+    Booking[Booking / Pricing Service]
+    SearchAPI[Search API]
+    BFF --> Identity
+    BFF --> Listing
+    BFF --> Booking
+    BFF --> SearchAPI
+  end
+
+  subgraph DataLayer[3. Data Layer]
+    direction LR
+    SQL[(Distributed Relational DB<br/>service-owned schemas · replicas)]
+    Cache[(Distributed Cache)]
+    Object[(Object Storage<br/>images · lifecycle tiers)]
+  end
+
+  subgraph AsyncLayer[4. Async Layer — eventually consistent]
+    direction LR
+    Bus[Event Bus / Queues]
+    Indexer[Async Indexing Workers]
+    Search[(Search Cluster<br/>geo · facets · ranking)]
+    Analytics[Warehouse / Analytics]
+    Bus --> Indexer
+    Indexer --> Search
+    Bus --> Analytics
+  end
+
+  subgraph ExternalLayer[5. External Services]
+    direction LR
+    Payments[Payment Provider]
+    ImageCDN[Image CDN / Transforms]
+  end
+
+  subgraph ObservabilityLayer[6. Observability]
+    direction LR
+    Obs[Logs · Metrics · Traces · Alerts]
+  end
+
+  subgraph DeliveryLayer[CI/CD deployment infrastructure]
+    direction LR
+    Repo[Private Source Control] --> CI[CI/CD<br/>lint · tests · build · scan]
+    CI --> Images[Versioned Container Images]
+    CI --> Assets[Hashed Static Assets]
+    Images --> Runtime[Multi-zone Container Platform<br/>autoscale · rolling deploys]
+  end
+
+  %% Primary request path.
+  Web --> BFF
+  SearchAPI --> Search
+  SearchAPI --> Cache
+  Identity --> SQL
+  Listing --> SQL
+  Booking --> SQL
+  Listing --> Cache
+  Listing --> Object
+  Object --> ImageCDN
+
+  %% Critical booking flow: strong consistency and transactional protection.
+  Booking -->|availability check| Listing
+  Listing -->|transaction + row lock| SQL
+  SQL -->|commit succeeds| Payments
+  Payments -->|payment result| Confirm[Booking confirmation]
+  Booking -. booking event .-> Bus
+
+  %% Critical indexing flow: asynchronous and eventually consistent.
+  Listing -->|listing changed event| Bus
+
+  %% Supporting event publication.
+  Identity -. profile event .-> Bus
+
+  %% Delivery wiring kept intentionally minimal.
+  Assets -. deploy static assets .-> DNS
+  Runtime -. deploy services .-> BFF
+
+  %% Observability is a non-functional signal, not a business-data dependency.
+  BFF -. telemetry .-> Obs
+  Bus -. telemetry .-> Obs
+  Runtime -. deploy health .-> Obs
+
+  classDef edge fill:#e8f5fb,stroke:#2d91b0,color:#143d4c,stroke-width:1.5px
+  classDef app fill:#eef0ff,stroke:#6266b4,color:#25264f,stroke-width:1.5px
+  classDef data fill:#fff1df,stroke:#d98935,color:#4c2d0d,stroke-width:1.5px
+  classDef async fill:#f1eaff,stroke:#895ac7,color:#342050,stroke-width:1.5px
+  classDef external fill:#eaf7ec,stroke:#4e9a61,color:#214c2b,stroke-width:1.5px
+  classDef observe fill:#f8eafa,stroke:#a451ae,color:#4a2052,stroke-width:1.5px
+  classDef delivery fill:#fffbdc,stroke:#b4a634,color:#4b4511,stroke-width:1.5px
+  classDef critical fill:#ffe6e6,stroke:#c84b4b,color:#5a1e1e,stroke-width:2px
+  classDef note fill:#f7f7f7,stroke:#777,color:#333,stroke-dasharray:4 3
+
+  class Users,DNS,Web edge
+  class BFF,Identity,Listing,Booking,SearchAPI app
+  class SQL,Cache,Object data
+  class Bus,Indexer,Search,Analytics async
+  class Payments,ImageCDN external
+  class Obs observe
+  class Repo,CI,Images,Assets,Runtime delivery
+  class Confirm critical
+
